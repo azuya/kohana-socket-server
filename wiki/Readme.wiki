@@ -13,10 +13,12 @@ Firstly, your php installation must have pcntl, socket, and command line mode en
 Extract the Kohana framework to a directory, and extract the Socket Server module into the _modules_ directory. Take a look through modules/socket_server/config for some info regarding connecting to the server once it's running.
 
 Edit the config.php in application/config/config.php to include the socket server module like so:
-{{{$config['modules'] = array
+{{{
+$config['modules'] = array
 (
 	MODPATH.'socket_server'      	// Socket Server
-);}}}
+);
+}}}
 
 From the terminal, run `php index.php server`
 

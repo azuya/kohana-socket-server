@@ -20,7 +20,7 @@ $config['modules'] = array
 );
 }}}
 
-From the terminal, run `php index.php server`
+From the terminal, cd to your kohana root and run `php index.php server`
 
 By default, the listening port number should be 10000. You can telnet to it using `telnet localhost 10000` to open a new connection.
 

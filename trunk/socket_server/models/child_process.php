@@ -7,19 +7,24 @@ class Child_Process_Model extends Model {
 	protected $ipc;
 	protected $read_size = 1024;
 	
-	public function __construct($pid = NULL, &$ipc)
+	public function __construct($pid = NULL)
 	{
 		if ($pid == NULL)
 		{
 			throw new Kohana_User_Exception('PID is null!');
 		}
-		if (!is_resource($ipc))
-		{
-			throw new Kohana_Exception('socket_server.error_ipc_resource', $pid);
-		}
 		$this->resources = array();
 		$this->pid = $pid;
-		$this->ipc = $ipc;
+	}
+	
+	public function add_ipc_stream(&$ipc = NULL)
+	{
+		if ($ipc != NULL AND is_resource($ipc))
+		{
+			$this->ipc = $ipc;
+		} else {
+			throw new Kohana_Exception('socket_server.error_ipc_resource', $pid);
+		}
 	}
 	
 	public function ipc_write($message, $serialize = FALSE)
@@ -31,9 +36,36 @@ class Child_Process_Model extends Model {
 		return fwrite($this->ipc, $message, strlen($message));
 	}
 	
-	public function ipc_read()
+	public function ipc_read($unserialize = FALSE)
 	{
-		return fread($this->ipc, $this->read_size);
+		$result = fread($this->ipc, $this->read_size);
+		if ($unserialize)
+		{
+			return unserialize($result);
+		}
+		return $result;
+	}
+	
+	public function ipc_read_select()
+	{
+		if (is_resource($this->ipc))
+		{
+			$read_stream = array($this->ipc);
+			
+			// first we check the stream (server IPC connection)
+			if (false === ($num_changed_streams = stream_select($read_stream, $write_stream = NULL, $exception_stream = NULL, 0, 0)))
+			{
+				// nothing
+			} elseif ($num_changed_streams > 0) {
+				return $this->ipc_read();
+			}
+		}
+		return null;
+	}
+	
+	public function get_ipc_stream()
+	{
+		return $this->ipc;
 	}
 	
 	public function add_resource(System_Resource_Model $resource, $id)
@@ -97,7 +129,12 @@ class Child_Process_Model extends Model {
 			$this->kill_all_resources();
 			unset($this->resources);
 		}
-		posix_kill($this->pid, SIGTERM);
+		@fclose($this->ipc);
+		unset($this->resources);
+		unset($this->ipc);
+		//unset($this->read_size);
+		//posix_kill($this->pid, SIGTERM);
+		//unset($this->pid);
 	}
 
 } // End Child Process Model

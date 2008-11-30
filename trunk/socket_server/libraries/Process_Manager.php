@@ -2,11 +2,12 @@
 
 class Process_Manager {
 	
-	protected $store, $cache;
+	protected $store, $cache, $server_ipc;
 	
 	public function __construct()
 	{
 		$this->store = array();
+		$this->server_ipc = array();
 		$this->cache = new Cache();
 		
 		$this->cleanup();
@@ -77,6 +78,68 @@ class Process_Manager {
 		}
 	}
 	
+	public function add_ipc_stream(&$stream = NULL, $pid = NULL)
+	{
+		if ($stream != NULL AND is_resource($stream) AND $this->has_process($pid))
+		{
+			$this->server_ipc[$pid] = $stream;
+		}
+	}
+	
+	public function ipc_read_select($read_size = 1024)
+	{
+		$read_stream = array();
+		$read_stream += $this->server_ipc;
+		
+		// first we check the stream (server IPC connection)
+		if (false === ($num_changed_streams = stream_select($read_stream, $write_stream = NULL, $exception_stream = NULL, 0, 0)))
+		{
+			// nothing
+		} elseif ($num_changed_streams > 0) {
+			$results = array();
+			foreach($read_stream as $stream)
+			{
+				$key = array_search($stream, $this->server_ipc);
+				$results[$key] = fread($stream, $read_size);
+			}
+			return $results;
+		}
+		return array();
+	}
+	
+	public function ipc_broadcast($message)
+	{
+		foreach($this->server_ipc as $pid => $stream)
+		{
+			if (false === fwrite($stream, $message, strlen($message)))
+			{
+				throw new Kohana_Exception('socket_server.error_ipc_write', $pid, $message);
+			}
+		}
+	}
+	
+	public function tell_child($pid = NULL, $message = NULL)
+	{
+		if ($pid != NULL
+			AND $message != NULL
+			AND $this->has_process($pid)
+			AND $this->has_ipc($pid))
+		{
+			return fwrite($this->server_ipc[$pid], $message, strlen($message));
+		}
+		return false;
+	}
+	
+	public function get_ipc_streams()
+	{
+		return $this->server_ipc;
+	}
+	
+	public function has_ipc($pid = NULL)
+	{
+		return array_key_exists($pid, $this->server_ipc);
+	}
+	
 	public function has_process($pid = NULL)
 	{
 		return array_key_exists($pid, $this->store);
@@ -85,6 +148,33 @@ class Process_Manager {
 	public function processes()
 	{
 		return count($this->store);
+	}
+	
+	private function monitor()
+	{
+		$processes = array();
+		foreach($this->store as $pid => $process)
+		{
+			if ($process instanceof Child_Process_Model)
+			{
+				if ($process->is_running())
+				{
+					$processes[$pid] = $process;
+				}
+			}
+		}
+		$this->store = $processes;
+		
+		$streams = array();
+		foreach($this->server_ipc as $pid => $stream)
+		{
+			if (is_resource($stream))
+			{
+				$streams[$pid] = $stream;
+			}
+		}
+		$this->server_ipc = $streams;
+		
 	}
 	
 	public function kill($pid = NULL)
@@ -97,9 +187,10 @@ class Process_Manager {
 				// process is still running
 				$this->store[$pid]->kill_all_resources();
 				$this->store[$pid]->__destruct();
-				$this->store[$pid] = NULL;
-				array_splice($this->store, $pid);
+				fclose($this->server_ipc[$pid]);
+				unset($this->server_ipc[$pid]);
 				unset($this->store[$pid]);
+				//$this->monitor();
 			}
 			if (posix_kill($pid, SIGTERM))
 			{
@@ -109,7 +200,7 @@ class Process_Manager {
 			} else {
 				// zombie process
 				Socket_Server::stdout(Kohana::lang('socket_server.error_zombie', $pid));
-				pcntl_waitpid($pid);
+				pcntl_waitpid($pid, $status = NULL);
 				return false;
 			}
 		} elseif (is_object($pid) AND $pid instanceof Child_Process_Model) {
@@ -126,8 +217,7 @@ class Process_Manager {
 			{
 				Socket_Server::stdout('Killing process: '.$child_process->pid);
 				$this->kill($child_process);
-				$status = NULL;
-				pcntl_waitpid($child_process->pid, $status);
+				pcntl_waitpid($child_process->pid, $status = NULL);
 			}
 			unset($this->store[$key]);
 		}

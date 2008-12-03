@@ -10,6 +10,12 @@
  */
 interface RPC_Driver {
 	
+	// returns a RPC_Response_Model
+	public function service(RPC_Request_Model $request);
+	
+	// returns a RPC_Response_Model
+	public function notify();
+	
 	public function ping();
 	
 	public function pong();

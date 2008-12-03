@@ -78,13 +78,9 @@ class Socket_Server_Core {
 							exit(1);
 						}
 						
-						//stream_set_blocking($ipc_streams[0], FALSE);
-						//stream_set_blocking($ipc_streams[1], TRUE);
-						
 						Socket_Server::stdout(Kohana::lang('socket_server.info_new_client', $this->clients));
 						
 						$resource = new System_Resource_Model($client_socket, 'socket_close');
-						$resource_id = 'socket'.microtime(true);
 						
 						$pid = pcntl_fork();
 						
@@ -93,123 +89,23 @@ class Socket_Server_Core {
 							// Failed to fork
 							Socket_Server::stdout('Failed to fork! Shutting down!');
 							$server_is_running = false; // trigger shutdown
-						} elseif ($pid == 0) {
-							// Child process
-							$ppid = posix_getpid();
-							
+						} else {
+							$ppid = ($pid == 0) ? posix_getpid() : $pid;
 							$child_process = new Child_Process_Model($ppid, $ipc_streams[1]);
-							$child_process->add_resource($resource, $resource_id);
+							$child_process->add_resource($resource, $ppid.'socket');
 							$child_process->add_ipc_stream($ipc_streams[1]);
-							$this->pm->add_process($pid, $child_process);
+							$this->pm->add_process($ppid, $child_process);
 							$this->pm->add_ipc_stream($ipc_streams[0], $ppid); // unnecessary
 							
-							$child_process->ipc_write('Client #'.$this->clients." connected to $ppid\n");
-							
-							//socket_set_nonblock($client_socket);
-							
-							$msg = "\n" . Kohana::lang('socket_server.client_welcome_msg') . "\n";
-							socket_write($client_socket, $msg, strlen($msg));
-							$keep_client_open = true;
-							$cur_buf = '';
-							$write_stream = NULL;
-							$exception_stream = NULL;
-							do {
-								// first we check the stream (server IPC connection)
-								$server_message = $child_process->ipc_read_select();
-								if (NULL != $server_message)
-								{
-									$command_from_server = $this->simple_rpc($server_message);;
-									
-									if ($command_from_server[0] == 'ping')
-									{
-										$child_process->ipc_write("pong\n");
-									} elseif ($command_from_server[0] == 'quit') {
-										$msg = "You have been disconnected.\n";
-										socket_write($client_socket, $msg, strlen($msg));
-										$keep_client_open = false;
-										break;
-									} elseif ($command_from_server[0] == 'broadcast') {
-										if (count($command_from_server[1]) == 1)
-										{
-											$args = substr($command_from_server[1][0], strpos($command_from_server[1][0], '"') + 1, strrpos($command_from_server[1][0], '"') - strpos($command_from_server[1][0], '"') - 1);
-											$msg = 'Broadcast: '.stripslashes($command_from_server[1][0])."\n";
-											socket_write($client_socket, $msg, strlen($msg));
-										}
-									}
-								}
-								
-								// then we check the client connection socket (timeout in 1 second from listening... we're good listeners)
-								$read_socket = array($client_socket);
-								if (false === ($num_changed_sockets = socket_select($read_socket, $write_stream, $exception_stream, 1, 0)))
-								{
-									/* Error handling */
-								} elseif ($num_changed_sockets > 0) {
-									/* At least on one of the streams something interesting happened */
-									$buffer = @socket_read($client_socket, $this->config['read_size']);
-									
-									if ($buffer === false)
-									{
-										// unexpected error, client probably was disconnected
-										$keep_client_open = false;
-										$msg_to_server = "kill $ppid\n";
-										Socket_Server::stdout('Broken Pipe. Sending IPC kill message to parent');
-										if (false === $child_process->ipc_write($msg_to_server))
-										{
-											Socket_Server::stdout('Error sending IPC message');
-										}
-									} else {
-										$command = trim($buffer);
-									}
-									
-									if ($command == 'quit') {
-										//$msg = "You have been disconnected.\n";
-										//socket_write($client_socket, $msg, strlen($msg));
-										//$keep_client_open = false;
-										$msg_to_server = "kill:$ppid\n";
-										Socket_Server::stdout('Sending IPC kill message to parent');
-										if (false === $child_process->ipc_write($msg_to_server))
-										{
-											Socket_Server::stdout('Error sending IPC message');
-										}
-										//break;
-									} elseif ($command == 'shutdown') {
-										$msg = "You have started a shutdown!\n";
-										socket_write($client_socket, $msg, strlen($msg));
-										Socket_Server::stdout('Shutdown server from client.');
-										$msg_to_server = "shutdown\n";
-										if (false === $child_process->ipc_write($msg_to_server))
-										{
-											Socket_Server::stdout('Error sending IPC message');
-										}
-										//$keep_client_open = false;
-										//break;
-									} elseif ($command == 'ping') {
-										$talkback = "pong\n";
-										socket_write($client_socket, $talkback, strlen($talkback));
-									} else {
-										$talkback = "Unknown command: $command\n";
-										socket_write($client_socket, $talkback, strlen($talkback));
-									}
-									//Socket_Server::stdout(Kohana::lang('socket_server.info_command', $this->clients, $command));
-								}
-								usleep(200000);
-							} while ($keep_client_open);
-							// on our way out!
-							Socket_Server::stdout(Kohana::lang('socket_server.info_disconnecting', $this->clients));
-							// take care of socket resouce used
-							socket_shutdown($client_socket);
-							$child_process->ipc_write('killed:'.$ppid."\n");
-							//$this->pm->kill($ppid);
-							@socket_close($client_socket);
-							exit(0);
-						} else {
-							$child_process = new Child_Process_Model($pid); // ipc stream for child to use
-							//$child_process->add_ipc_stream($ipc_streams[1]);
-							$child_process->add_resource($resource, $resource_id);
-							$this->pm->add_process($pid, $child_process);
-							$this->pm->add_ipc_stream($ipc_streams[0], $pid); // add ipc stream for parent to use
-							// Continue listening in parent
-							Socket_Server::stdout('Started child with pid: '.$pid);
+							if ($pid == 0)
+							{
+								// Child process
+								$child_process->ipc_write('Client #'.$this->clients." connected to $ppid\n");
+								$this->child_process($child_process);
+							} else {
+								// Parent process
+								Socket_Server::stdout('Started child with pid: '.$pid);
+							}
 						}
 					}
 				} else {
@@ -270,15 +166,118 @@ class Socket_Server_Core {
 		}
 	}
 	
+	private function child_process(Child_Process_Model &$child)
+	{
+		$client_socket = $child->get_resource($child->pid.'socket');
+		$msg = "\n" . Kohana::lang('socket_server.client_welcome_msg') . "\n";
+		socket_write($client_socket->rs, $msg, strlen($msg));
+		$keep_client_open = true;
+		$cur_buf = '';
+		$write_stream = NULL;
+		$exception_stream = NULL;
+		do {
+			// first we check the stream (server IPC connection)
+			$server_message = $child->ipc_read_select();
+			if (NULL != $server_message)
+			{
+				$command_from_server = $this->simple_rpc($server_message);
+				
+				if ($command_from_server[0] == 'ping')
+				{
+					$child->ipc_write("pong\n");
+				} elseif ($command_from_server[0] == 'quit') {
+					$keep_client_open = false;
+					break;
+				} elseif ($command_from_server[0] == 'broadcast') {
+					if (count($command_from_server[1]) == 1)
+					{
+						$args = substr($command_from_server[1][0], strpos($command_from_server[1][0], '"') + 1, strrpos($command_from_server[1][0], '"') - strpos($command_from_server[1][0], '"') - 1);
+						$msg = 'Broadcast: '.stripslashes($command_from_server[1][0])."\n";
+						socket_write($client_socket->rs, $msg, strlen($msg));
+					}
+				}
+			}
+			
+			// then we check the client connection socket (timeout in 1 second from listening... we're good listeners)
+			$read_socket = array($client_socket->rs);
+			if (false === ($num_changed_sockets = socket_select($read_socket, $write_stream, $exception_stream, 1, 0)))
+			{
+				/* Error handling */
+			} elseif ($num_changed_sockets > 0) {
+				/* At least on one of the streams something interesting happened */
+				$buffer = @socket_read($client_socket->rs, $this->config['read_size']);
+				
+				if ($buffer === false)
+				{
+					// unexpected error, client probably was disconnected
+					$keep_client_open = false;
+					$msg_to_server = "kill:$ppid\n";
+					Socket_Server::stdout('Broken Pipe. Sending IPC kill message to parent');
+					if (false === $child->ipc_write($msg_to_server))
+					{
+						Socket_Server::stdout('Error sending IPC message');
+					}
+				} else {
+					$command = trim($buffer);
+				}
+				
+				if ($command == 'quit') {
+					$msg_to_server = 'kill:'.$child->pid."\n";
+					Socket_Server::stdout('Sending IPC kill message to parent');
+					if (false === $child->ipc_write($msg_to_server))
+					{
+						Socket_Server::stdout('Error sending IPC message');
+					}
+					//break;
+				} elseif ($command == 'shutdown') {
+					$msg = "You have started a shutdown!\n";
+					socket_write($client_socket->rs, $msg, strlen($msg));
+					Socket_Server::stdout('Shutdown server from client.');
+					$msg_to_server = "shutdown\n";
+					if (false === $child->ipc_write($msg_to_server))
+					{
+						Socket_Server::stdout('Error sending IPC message');
+					}
+					//$keep_client_open = false;
+					//break;
+				} elseif ($command == 'ping') {
+					$msg_to_server = "ping\n";
+					if (false === $child->ipc_write($msg_to_server))
+					{
+						Socket_Server::stdout('Error sending IPC message');
+					}
+					$talkback = "pong\n";
+					socket_write($client_socket->rs, $talkback, strlen($talkback));
+				} else {
+					$talkback = "Unknown command: $command\n";
+					socket_write($client_socket->rs, $talkback, strlen($talkback));
+				}
+				//Socket_Server::stdout(Kohana::lang('socket_server.info_command', $this->clients, $command));
+			}
+			usleep(200000);
+		} while ($keep_client_open);
+		// on our way out!
+		Socket_Server::stdout(Kohana::lang('socket_server.info_disconnecting', $this->clients));
+		// take care of socket resouce used
+		$client_socket->__destruct();
+		$child->ipc_write('killed:'.$child->pid."\n");
+		exit(0);
+	}
+	
 	private function ipc_received($command)
 	{
 		$rpc = $this->simple_rpc($command);
 		if ($rpc[0] == 'processes') {
 			Socket_Server::stdout('Processes: '.$this->pm->processes());
 		} elseif ($rpc[0] == 'ping') {
-			Socket_Server::stdout('Pinging all children');
-			$broadcast = "ping\n";
-			$this->pm->ipc_broadcast($broadcast);
+			if (count($rpc[1]) == 0)
+			{
+				Socket_Server::stdout('Pinging all children');
+				$broadcast = "ping\n";
+				$this->pm->ipc_broadcast($broadcast);
+			} elseif (count($rpc[1]) == 1) {
+				$this->pm->tell_child($rpc[1][0], 'ping');
+			}
 		} elseif ($rpc[0] == 'killed') {
 			if (count($rpc[1]) == 1)
 			{

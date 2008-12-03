@@ -19,6 +19,16 @@ class System_Resource_Model extends Model {
 		$this->destroyer = $destroyer;
 	}
 	
+	public function __get($name)
+	{
+		return $this->{$name};
+	}
+	
+	public function __set($name, $value)
+	{
+		return;
+	}
+	
 	public function __destruct()
 	{
 		if (is_resource($this->rs))

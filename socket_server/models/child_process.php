@@ -76,6 +76,15 @@ class Child_Process_Model extends Model {
 		}
 	}
 	
+	public function get_resource($id)
+	{
+		if (array_key_exists($id, $this->resources))
+		{
+			return $this->resources[$id];
+		}
+		return null;
+	}
+	
 	public function kill_resource($id)
 	{
 		if (array_key_exists($id, $this->resources))
